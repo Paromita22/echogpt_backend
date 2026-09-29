@@ -1,11 +1,21 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { createHash, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
 @Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private jwtService: JwtService,
+  ) {}
 
   async register(dto: RegisterDto) {
     // stop if the email is already used
@@ -37,5 +47,53 @@ export class AuthService {
 
     // never send the password back
     return { id: user.id, email: user.email, name: user.name };
+  }
+
+  async login(dto: LoginDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      include: { role: true },
+    });
+
+    // same message for wrong email and wrong password
+    if (!user) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+    const passwordOk = await bcrypt.compare(dto.password, user.password);
+    if (!passwordOk) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    return this.createTokens(user.id, user.email, user.role.name);
+  }
+
+  // makes both tokens and saves a session row
+  private async createTokens(userId: number, email: string, role: string) {
+    const payload = { sub: userId, email, role };
+
+    const accessToken = await this.jwtService.signAsync(payload, {
+      secret: process.env.JWT_ACCESS_SECRET,
+      expiresIn: '15m',
+    });
+
+    // jwtid makes every refresh token unique
+    const refreshToken = await this.jwtService.signAsync(payload, {
+      secret: process.env.JWT_REFRESH_SECRET,
+      expiresIn: '7d',
+      jwtid: randomUUID(),
+    });
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    await this.prisma.session.create({
+      data: {
+        userId,
+        refreshToken: createHash('sha256').update(refreshToken).digest('hex'),
+        expiresAt,
+      },
+    });
+
+    return { accessToken, refreshToken };
   }
 }
