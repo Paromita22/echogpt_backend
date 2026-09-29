@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { RefreshDto } from './dto/refresh.dto';
 
 @Injectable()
 export class AuthService {
@@ -66,7 +67,34 @@ export class AuthService {
 
     return this.createTokens(user.id, user.email, user.role.name);
   }
+  async refresh(dto: RefreshDto) {
+    let payload: { sub: number; email: string; role: string };
+    try {
+      payload = await this.jwtService.verifyAsync(dto.refreshToken, {
+        secret: process.env.JWT_REFRESH_SECRET,
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
 
+    const tokenHash = createHash('sha256').update(dto.refreshToken).digest('hex');
+    const session = await this.prisma.session.findFirst({
+      where: { userId: payload.sub, refreshToken: tokenHash },
+    });
+    if (!session || session.expiresAt < new Date()) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // old session is replaced by a new one (rotation)
+    await this.prisma.session.delete({ where: { id: session.id } });
+    return this.createTokens(payload.sub, payload.email, payload.role);
+  }
+
+  async logout(refreshToken: string) {
+    const tokenHash = createHash('sha256').update(refreshToken).digest('hex');
+    await this.prisma.session.deleteMany({ where: { refreshToken: tokenHash } });
+    return { message: 'Logged out' };
+  }
   // makes both tokens and saves a session row
   private async createTokens(userId: number, email: string, role: string) {
     const payload = { sub: userId, email, role };

@@ -10,6 +10,7 @@ import {
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { RefreshDto } from './dto/refresh.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -31,5 +32,18 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Invalid email or password' })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+    @Post('refresh')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Exchange a refresh token for new tokens' })
+  refresh(@Body() dto: RefreshDto) {
+    return this.authService.refresh(dto);
+  }
+
+  @Post('logout')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Invalidate a refresh token' })
+  logout(@Body() dto: RefreshDto) {
+    return this.authService.logout(dto.refreshToken);
   }
 }
